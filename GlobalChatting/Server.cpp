@@ -1,15 +1,42 @@
 #include <iostream>
+#include <string>
 #include <winsock2.h>
-#include "ChatRoom.cpp"
+#include <thread> // Required for std::thread
 
-#pragma comment(lib, "ws2_32.lib")  // Link Winsock library
+#pragma comment(lib, "ws2_32.lib")
+
+// This function will be executed by each client thread
+void handle_client(SOCKET clientSocket) {
+    std::cout << "Client connected on thread " << std::endl;
+
+    char buffer[1024];
+
+    // Communication loop for this client
+    while (true) {
+        memset(buffer, 0, sizeof(buffer));
+        int bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0);
+
+        if (bytesReceived <= 0) {
+            std::cout << "Client on thread disconnected." << std::endl;
+            break; // Exit the loop
+        }
+
+        std::cout << "[Client]: " << buffer << std::endl;
+
+        // For simplicity, this server just echoes the message back.
+        // You can add your custom logic here.
+        std::string message = "Echo: ";
+        message += buffer;
+        send(clientSocket, message.c_str(), message.length() + 1, 0);
+    }
+
+    closesocket(clientSocket); // Close the socket for this client
+}
 
 int main() {
-    
     WSADATA wsaData;
-    int wsaResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
-    if (wsaResult != 0) {
-        std::cerr << "WSAStartup failed: " << wsaResult << std::endl;
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        std::cerr << "WSAStartup failed" << std::endl;
         return 1;
     }
 
@@ -33,32 +60,25 @@ int main() {
     }
 
     listen(serverSocket, 5);
-    std::cout << "Server listening on port 8080..." << std::endl;
+    std::cout << "Server is awake and listening on port 8080..." << std::endl;
 
-    SOCKET clientSocket = accept(serverSocket, nullptr, nullptr);
-    if (clientSocket == INVALID_SOCKET) {
-        std::cerr << "Accept failed: " << WSAGetLastError() << std::endl;
-        closesocket(serverSocket);
-        WSACleanup();
-        return 1;
+    // ----- Main accept loop -----
+    // This loop runs forever, accepting new clients.
+    while (true) {
+        SOCKET clientSocket = accept(serverSocket, nullptr, nullptr);
+        if (clientSocket == INVALID_SOCKET) {
+            std::cerr << "Accept failed: " << WSAGetLastError() << std::endl;
+            continue; // Continue to the next iteration to accept another client
+        }
+
+        // Create a new thread to handle this client
+        // The handle_client function will now run on a separate thread
+        std::thread clientThread(handle_client, clientSocket);
+        clientThread.detach(); // Detach the thread to run independently
     }
+    // ----- Loop ends (in practice, it doesn't) -----
 
-    char buffer[1024] = { 0 };
-    recv(clientSocket, buffer, sizeof(buffer), 0);
-    std::cout << "Message from client: " << buffer << std::endl;
-
-
-    ChatRoom myChatRooms; 
-
-    const string roomsList = myChatRooms.getRoomsListString();
-    const char* messageToSend = roomsList.c_str();
-    size_t messageLength = roomsList.length();
-    send(clientSocket, messageToSend, messageLength, 0);
-
-
-    closesocket(clientSocket);
     closesocket(serverSocket);
     WSACleanup();
-
     return 0;
 }

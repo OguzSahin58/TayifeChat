@@ -1,14 +1,13 @@
 #include <iostream>
+#include <string> // Added for std::string
 #include <winsock2.h>
 
 #pragma comment(lib, "ws2_32.lib")
 
-
 int main() {
     WSADATA wsaData;
-    int wsaResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
-    if (wsaResult != 0) {
-        std::cerr << "WSAStartup failed: " << wsaResult << std::endl;
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        std::cerr << "WSAStartup failed" << std::endl;
         return 1;
     }
 
@@ -22,7 +21,7 @@ int main() {
     sockaddr_in serverAddress{};
     serverAddress.sin_family = AF_INET;
     serverAddress.sin_port = htons(8080);
-    serverAddress.sin_addr.s_addr = inet_addr("127.0.0.1");  // connect to localhost
+    serverAddress.sin_addr.s_addr = inet_addr("127.0.0.1"); // Connect to localhost
 
     if (connect(clientSocket, (struct sockaddr*)&serverAddress, sizeof(serverAddress)) == SOCKET_ERROR) {
         std::cerr << "Connection failed: " << WSAGetLastError() << std::endl;
@@ -31,16 +30,42 @@ int main() {
         return 1;
     }
 
-    const char* message = "Hello, server!";
-    send(clientSocket, message, strlen(message), 0);
-    std::cout << "Message sent to server." << std::endl;
+    std::cout << "Connected to the server! You can start chatting. Type 'exit' to quit." << std::endl;
 
-    char buffer[1024] = { 0 };
-    recv(clientSocket, buffer, sizeof(buffer), 0);
-    std::cout << "Message from server: " << buffer << std::endl;
+    char buffer[1024];
+    std::string input;
+
+    // ----- Main communication loop starts here -----
+    while (true) {
+        // 1. Get client user's message and send it
+        std::cout << "Client: ";
+        std::getline(std::cin, input);
+        send(clientSocket, input.c_str(), input.length() + 1, 0); // +1 to include null terminator
+
+        // Check if the client wants to exit
+        if (input == "exit") {
+            break;
+        }
+
+        // 2. Receive reply from server
+        memset(buffer, 0, sizeof(buffer)); // Clear the buffer
+        int bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0);
+
+        if (bytesReceived <= 0) {
+            std::cout << "Server disconnected." << std::endl;
+            break; // Exit loop if server disconnects or an error occurs
+        }
+
+        std::cout << "Server: " << buffer << std::endl;
+
+        // Check if the server sent an exit message
+        if (strcmp(buffer, "exit") == 0) {
+            break;
+        }
+    }
+    // ----- Loop ends -----
 
     closesocket(clientSocket);
     WSACleanup();
-
     return 0;
 }
