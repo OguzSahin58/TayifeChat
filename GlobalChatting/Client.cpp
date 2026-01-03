@@ -1,71 +1,153 @@
 #include <iostream>
-#include <string> // Added for std::string
 #include <winsock2.h>
+#include <ws2tcpip.h>
+#include <string>
+#include <thread>
 
 #pragma comment(lib, "ws2_32.lib")
 
+#define PORT 8080
+#define BUFFER_SIZE 1024
+
+bool running = true;
+
+void receive_messages(SOCKET sock) {
+    char buffer[BUFFER_SIZE];
+
+    while (running) {
+        memset(buffer, 0, BUFFER_SIZE);
+        int valread = recv(sock, buffer, BUFFER_SIZE, 0);
+
+        if (valread > 0) {
+            std::cout << "\n" << buffer << std::endl;
+            std::cout << "You: " << std::flush;
+        }
+        else if (valread == 0) {
+            std::cout << "\nServer disconnected" << std::endl;
+            running = false;
+            break;
+        }
+        else {
+            if (running) {
+                std::cerr << "\nReceive failed: " << WSAGetLastError() << std::endl;
+            }
+            running = false;
+            break;
+        }
+    }
+}
+
 int main() {
     WSADATA wsaData;
+    SOCKET sock = INVALID_SOCKET;
+    struct sockaddr_in serv_addr;
+    char buffer[BUFFER_SIZE] = { 0 };
+
+    // Initialize Winsock
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
         std::cerr << "WSAStartup failed" << std::endl;
-        return 1;
+        return -1;
     }
 
-    SOCKET clientSocket = socket(AF_INET, SOCK_STREAM, 0);
-    if (clientSocket == INVALID_SOCKET) {
-        std::cerr << "Socket creation failed" << std::endl;
+    // Create socket
+    if ((sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) == INVALID_SOCKET) {
+        std::cerr << "Socket creation error: " << WSAGetLastError() << std::endl;
         WSACleanup();
-        return 1;
+        return -1;
     }
 
-    sockaddr_in serverAddress{};
-    serverAddress.sin_family = AF_INET;
-    serverAddress.sin_port = htons(8080);
-    serverAddress.sin_addr.s_addr = inet_addr("127.0.0.1"); // Connect to localhost
+    // Configure server address
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(PORT);
 
-    if (connect(clientSocket, (struct sockaddr*)&serverAddress, sizeof(serverAddress)) == SOCKET_ERROR) {
+    // Convert IP address from text to binary
+    if (inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr) <= 0) {
+        std::cerr << "Invalid address" << std::endl;
+        closesocket(sock);
+        WSACleanup();
+        return -1;
+    }
+
+    // Connect to server
+    if (connect(sock, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) == SOCKET_ERROR) {
         std::cerr << "Connection failed: " << WSAGetLastError() << std::endl;
-        closesocket(clientSocket);
+        closesocket(sock);
         WSACleanup();
-        return 1;
+        return -1;
     }
 
-    std::cout << "Connected to the server! You can start chatting. Type 'exit' to quit." << std::endl;
+    std::cout << "Connected to chat server!" << std::endl;
 
-    char buffer[1024];
-    std::string input;
+    // Receive username prompt
+    memset(buffer, 0, BUFFER_SIZE);
+    recv(sock, buffer, BUFFER_SIZE, 0);
+    std::cout << buffer;
 
-    // ----- Main communication loop starts here -----
-    while (true) {
-        // 1. Get client user's message and send it
-        std::cout << "Client: ";
-        std::getline(std::cin, input);
-        send(clientSocket, input.c_str(), input.length() + 1, 0); // +1 to include null terminator
+    // Send username
+    std::string username;
+    std::getline(std::cin, username);
+    send(sock, username.c_str(), username.length(), 0);
 
-        // Check if the client wants to exit
-        if (input == "exit") {
-            break;
+    // Receive room list
+    memset(buffer, 0, BUFFER_SIZE);
+    recv(sock, buffer, BUFFER_SIZE, 0);
+    std::cout << "\n" << buffer;
+
+    // Receive room prompt
+    memset(buffer, 0, BUFFER_SIZE);
+    recv(sock, buffer, BUFFER_SIZE, 0);
+    std::cout << buffer;
+
+    // Send room choice
+    std::string room_choice;
+    std::getline(std::cin, room_choice);
+    send(sock, room_choice.c_str(), room_choice.length(), 0);
+
+    // Receive welcome or error message
+    memset(buffer, 0, BUFFER_SIZE);
+    int valread = recv(sock, buffer, BUFFER_SIZE, 0);
+    std::cout << "\n" << buffer << std::endl;
+
+    // Check if connection was rejected
+    if (strstr(buffer, "Invalid") != NULL || strstr(buffer, "Disconnecting") != NULL) {
+        closesocket(sock);
+        WSACleanup();
+        return 0;
+    }
+
+    // Start receiving thread
+    std::thread receive_thread(receive_messages, sock);
+
+    // Main sending loop
+    std::string message;
+    while (running) {
+        std::cout << "You: ";
+        std::getline(std::cin, message);
+
+        if (message.empty()) {
+            continue;
         }
 
-        // 2. Receive reply from server
-        memset(buffer, 0, sizeof(buffer)); // Clear the buffer
-        int bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0);
+        // Send message
+        send(sock, message.c_str(), message.length(), 0);
 
-        if (bytesReceived <= 0) {
-            std::cout << "Server disconnected." << std::endl;
-            break; // Exit loop if server disconnects or an error occurs
-        }
-
-        std::cout << "Server: " << buffer << std::endl;
-
-        // Check if the server sent an exit message
-        if (strcmp(buffer, "exit") == 0) {
+        // Check if exit command
+        if (message == "exit") {
+            running = false;
             break;
         }
     }
-    // ----- Loop ends -----
 
-    closesocket(clientSocket);
+    // Wait for receive thread to finish
+    if (receive_thread.joinable()) {
+        receive_thread.join();
+    }
+
+    // Close socket
+    closesocket(sock);
     WSACleanup();
+
+    std::cout << "Disconnected from server" << std::endl;
+
     return 0;
 }
