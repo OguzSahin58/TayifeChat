@@ -17,6 +17,7 @@ g++ client.cpp -o client.exe -lws2_32
 ```
 
 ### Execute
+```bash
 ./server.exe
 ./client.exe
-
+```
