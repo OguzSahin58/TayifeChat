@@ -33,5 +33,27 @@
     <ClCompile Include="ChatRoom.cpp">
       <Filter>Source Files\Server</Filter>
     </ClCompile>
+    <ClCompile Include="database.cpp">
+      <Filter>Source Files\Server</Filter>
+    </ClCompile>
+    <ClCompile Include="sqlite3.c">
+      <Filter>Source Files\Server</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="sqlite3.h">
+      <Filter>Source Files\Server</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="sqlite3.dll">
+      <Filter>Source Files\Server</Filter>
+    </None>
+    <None Include="chatserver.db">
+      <Filter>Source Files</Filter>
+    </None>
+    <None Include="sqlite3.def">
+      <Filter>Source Files\Server</Filter>
+    </None>
   </ItemGroup>
 </Project>

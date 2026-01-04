@@ -7,6 +7,7 @@
 #include <mutex>
 #include <string>
 #include <algorithm>
+#include "database.cpp"
 #include "chatroom.cpp"
 
 #pragma comment(lib, "ws2_32.lib")
@@ -19,6 +20,7 @@ struct ClientInfo {
     int id;
     std::string username;
     std::string room;
+    int user_db_id;
 };
 
 std::map<int, ClientInfo> connected_clients;
@@ -27,6 +29,7 @@ std::mutex cout_mutex;
 int client_count = 0;
 
 ChatRoomManager room_manager;
+DatabaseManager db_manager;
 
 void broadcast_to_room(const std::string& room_name, const std::string& message, int sender_id) {
     std::lock_guard<std::mutex> lock(clients_mutex);
@@ -38,32 +41,15 @@ void broadcast_to_room(const std::string& room_name, const std::string& message,
     }
 }
 
-void list_room_members(const std::string& room_name) {
-    std::lock_guard<std::mutex> lock(clients_mutex);
-
-    std::string members = "Members in " + room_name + ": ";
-    bool first = true;
-
-    for (auto& pair : connected_clients) {
-        if (pair.second.room == room_name) {
-            if (!first) members += ", ";
-            members += pair.second.username;
-            first = false;
-        }
-    }
-
-    return;
-}
-
 void handle_client(SOCKET client_fd, int client_id) {
     char buffer[BUFFER_SIZE];
     ClientInfo client_info;
     client_info.socket = client_fd;
     client_info.id = client_id;
 
-    // Ask for username
-    const char* username_prompt = "Enter your username: ";
-    send(client_fd, username_prompt, strlen(username_prompt), 0);
+    // Authentication process
+    const char* auth_prompt = "=== Chat Server Authentication ===\nEnter username: ";
+    send(client_fd, auth_prompt, strlen(auth_prompt), 0);
 
     memset(buffer, 0, BUFFER_SIZE);
     int valread = recv(client_fd, buffer, BUFFER_SIZE, 0);
@@ -71,7 +57,59 @@ void handle_client(SOCKET client_fd, int client_id) {
         closesocket(client_fd);
         return;
     }
-    client_info.username = std::string(buffer);
+    std::string username(buffer);
+
+    // Check if username exists in database
+    if (!db_manager.username_exists(username)) {
+        const char* error_msg = "Error: Username not found in database. Please contact administrator.\n";
+        send(client_fd, error_msg, strlen(error_msg), 0);
+        {
+            std::lock_guard<std::mutex> lock(cout_mutex);
+            std::cout << "Authentication failed: Username '" << username << "' not found" << std::endl;
+        }
+        closesocket(client_fd);
+        return;
+    }
+
+    // Ask for password
+    const char* pass_prompt = "Enter password: ";
+    send(client_fd, pass_prompt, strlen(pass_prompt), 0);
+
+    memset(buffer, 0, BUFFER_SIZE);
+    valread = recv(client_fd, buffer, BUFFER_SIZE, 0);
+    if (valread <= 0) {
+        closesocket(client_fd);
+        return;
+    }
+    std::string password(buffer);
+
+    // Authenticate user
+    if (!db_manager.authenticate_user(username, password)) {
+        const char* error_msg = "Error: Invalid password or account is inactive.\n";
+        send(client_fd, error_msg, strlen(error_msg), 0);
+        {
+            std::lock_guard<std::mutex> lock(cout_mutex);
+            std::cout << "Authentication failed: Invalid password for user '" << username << "'" << std::endl;
+        }
+        closesocket(client_fd);
+        return;
+    }
+
+    // Update last login and log session
+    int user_db_id = db_manager.get_user_id(username);
+    db_manager.update_last_login(username);
+    db_manager.log_session(user_db_id);
+
+    client_info.username = username;
+    client_info.user_db_id = user_db_id;
+
+    {
+        std::lock_guard<std::mutex> lock(cout_mutex);
+        std::cout << "User '" << username << "' authenticated successfully (Client #" << client_id << ")" << std::endl;
+    }
+
+    const char* success_msg = "Authentication successful!\n\n";
+    send(client_fd, success_msg, strlen(success_msg), 0);
 
     // Send available rooms
     std::string rooms_list = room_manager.list_rooms();
@@ -145,8 +183,8 @@ void handle_client(SOCKET client_fd, int client_id) {
         broadcast_to_room(client_info.room, full_message, client_id);
 
         // Acknowledge to sender
-        std::string ack = "Message sent to " + client_info.room;
-        send(client_fd, ack.c_str(), ack.length(), 0);
+        // std::string ack = "Message sent to " + client_info.room;
+        // send(client_fd, ack.c_str(), ack.length(), 0);
     }
 
     // Remove client and notify room
@@ -172,6 +210,12 @@ int main() {
     SOCKET server_fd = INVALID_SOCKET;
     struct sockaddr_in address;
     int addrlen = sizeof(address);
+
+    // Connect to database
+    if (!db_manager.connect()) {
+        std::cerr << "Failed to connect to database. Exiting..." << std::endl;
+        return -1;
+    }
 
     // Initialize Winsock
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
@@ -207,11 +251,12 @@ int main() {
         return -1;
     }
 
-    std::cout << "=== Chat Server Started ===" << std::endl;
+    std::cout << "\n=== Chat Server Started ===" << std::endl;
     std::cout << "Server listening on port " << PORT << std::endl;
+    std::cout << "Database: Connected" << std::endl;
     std::cout << "Available rooms:" << std::endl;
     std::cout << room_manager.list_rooms() << std::endl;
-    std::cout << "Waiting for clients to connect...\n" << std::endl;
+    std::cout << "Waiting for authenticated clients to connect...\n" << std::endl;
 
     std::vector<std::thread> client_threads;
 

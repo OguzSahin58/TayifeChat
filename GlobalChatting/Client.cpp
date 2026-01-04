@@ -19,8 +19,14 @@ void receive_messages(SOCKET sock) {
         int valread = recv(sock, buffer, BUFFER_SIZE, 0);
 
         if (valread > 0) {
-            std::cout << "\n" << buffer << std::endl;
-            std::cout << "You: " << std::flush;
+            std::string message(buffer);
+
+            // Only show messages from other users (not acknowledgments)
+            if (message.find("Message sent to") == std::string::npos) {
+                std::cout << "\r" << std::string(50, ' ') << "\r"; // Clear current line
+                std::cout << buffer << std::endl;
+                std::cout << "You: " << std::flush;
+            }
         }
         else if (valread == 0) {
             std::cout << "\nServer disconnected" << std::endl;
@@ -69,6 +75,7 @@ int main() {
     }
 
     // Connect to server
+    std::cout << "Connecting to chat server..." << std::endl;
     if (connect(sock, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) == SOCKET_ERROR) {
         std::cerr << "Connection failed: " << WSAGetLastError() << std::endl;
         closesocket(sock);
@@ -76,9 +83,9 @@ int main() {
         return -1;
     }
 
-    std::cout << "Connected to chat server!" << std::endl;
+    std::cout << "Connected to chat server!\n" << std::endl;
 
-    // Receive username prompt
+    // Receive authentication prompt
     memset(buffer, 0, BUFFER_SIZE);
     recv(sock, buffer, BUFFER_SIZE, 0);
     std::cout << buffer;
@@ -88,15 +95,56 @@ int main() {
     std::getline(std::cin, username);
     send(sock, username.c_str(), username.length(), 0);
 
-    // Receive room list
-    memset(buffer, 0, BUFFER_SIZE);
-    recv(sock, buffer, BUFFER_SIZE, 0);
-    std::cout << "\n" << buffer;
-
-    // Receive room prompt
+    // Receive password prompt or error
     memset(buffer, 0, BUFFER_SIZE);
     recv(sock, buffer, BUFFER_SIZE, 0);
     std::cout << buffer;
+
+    // Check if authentication failed (username not found)
+    if (strstr(buffer, "Error") != NULL) {
+        closesocket(sock);
+        WSACleanup();
+        return 0;
+    }
+
+    // Send password
+    std::string password;
+    std::getline(std::cin, password);
+    send(sock, password.c_str(), password.length(), 0);
+
+    // Receive authentication result
+    memset(buffer, 0, BUFFER_SIZE);
+    recv(sock, buffer, BUFFER_SIZE, 0);
+    std::cout << buffer;
+
+    // Check if authentication failed (wrong password)
+    if (strstr(buffer, "Error") != NULL) {
+        closesocket(sock);
+        WSACleanup();
+        return 0;
+    }
+
+    // Receive room list and prompt together
+    memset(buffer, 0, BUFFER_SIZE);
+    int bytes_received = 0;
+    std::string full_message;
+
+    // Keep receiving until we get the room prompt
+    while (true) {
+        bytes_received = recv(sock, buffer, BUFFER_SIZE - 1, 0);
+        if (bytes_received > 0) {
+            buffer[bytes_received] = '\0';
+            full_message += buffer;
+
+            // Check if we received the room prompt
+            if (full_message.find("Enter room number") != std::string::npos) {
+                break;
+            }
+        }
+        memset(buffer, 0, BUFFER_SIZE);
+    }
+
+    std::cout << full_message;
 
     // Send room choice
     std::string room_choice;
